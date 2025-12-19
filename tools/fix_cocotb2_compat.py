@@ -86,6 +86,12 @@ API_TRANSFORMS = [
     # LogicArray format specifiers need int() wrapper
     (r'\{(dut\.\w+\.value)(:[\#0-9]*[xXbBoOdD][^}]*)\}', r'{int(\1)\2}'),
     (r'\{(dut\.\w+\.value\[\w+\])(:[\#0-9]*[xXbBoOdD][^}]*)\}', r'{int(\1)\2}'),
+    
+    # .is_resolvable doesn't exist on Logic (single bit from subscript)
+    # LogicArray has it, Logic doesn't - use hasattr check for compatibility
+    # (?<![.\w]) ensures we match full identifiers not preceded by . or other word chars
+    # This avoids matching .value.is_resolvable (which works fine)
+    (r'(?<![.\w])(\w+)\.is_resolvable', r"((\1.is_resolvable) if hasattr(\1, 'is_resolvable') else (str(\1) in ('0', '1')))"),
 ]
 
 
