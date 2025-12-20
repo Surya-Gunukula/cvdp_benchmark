@@ -93,8 +93,8 @@ class UnifiedModelInstance:
                 raise ValueError("Unable to connect to Moonshot - No API key provided")
             self.is_local = False
         else:
-            # Local SGLang models (default)
-            self.base_url = "http://127.0.0.1:30000/v1"
+            # Local SGLang models (default) - using SFT model on port 8001
+            self.base_url = "http://127.0.0.1:8001/v1"
             self.api_key = "None"
             self.is_local = True
         
@@ -137,14 +137,23 @@ class UnifiedModelInstance:
         helper = ModelHelpers()
         system_prompt = helper.create_system_prompt(self.context, schema, category)
         
-        system_prompt = system_prompt + "\n" + """\
+        system_prompt = """
 You are a world-class expert in hardware design and verification who uses SystemVerilog fluently.
-Please THINK HARD on the input.
-When you are done, please try to answer the question, preferrably by writing a complete module or function,
+Please always THINK HARD and put your thoughts in <think> and </think> tags.
+When you are done thinking, please try to answer the question, preferrably by writing a complete module or function,
 including some of the wrapper code you are given, instead of just filling in the blanks.
+Your response should be:
+<think>
+thinking here
+</think>
+your answer here
     """
     
-        print("SYSTEM", system_prompt)
+        print("\n" + "="*80)
+        print("📋 SYSTEM PROMPT")
+        print("="*80)
+        print(system_prompt)
+        print("="*80 + "\n")
         
         if timeout == 60:
             timeout = config.get("MODEL_TIMEOUT", 60)
@@ -170,23 +179,80 @@ including some of the wrapper code you are given, instead of just filling in the
                 model=self.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
-                    #{"role": "assistant", "content": "<think>"},
+                    {"role": "user", "content": prompt + "/think"},
+                    # {"role": "assistant", "content": "<think>"},
                 ],
                 max_tokens=32768,
                 timeout=timeout,
                 temperature=0.7
             )           
             
-            print(response)
+            print("\n" + "="*80)
+            print("🔌 RAW API RESPONSE")
+            print("="*80)
+            print(f"Model: {response.model}")
+            if hasattr(response, 'usage') and response.usage:
+                print(f"Tokens - Prompt: {response.usage.prompt_tokens}, Completion: {response.usage.completion_tokens}, Total: {response.usage.total_tokens}")
+            print("="*80 + "\n")
             
             content = response.choices[0].message.content 
+            
+            print("\n" + "="*80)
+            print("🤖 MODEL OUTPUT (RAW)")
+            print("="*80)
             print(content)
+            print("="*80 + "\n")
+            
+            # Check for thinking tags and extract content
+            has_opening_tag = "<think>" in content
+            has_closing_tag = "</think>" in content
+            
+            print("\n" + "="*80)
+            print("🔍 THINKING TAGS ANALYSIS")
+            print("="*80)
+            print(f"Has opening tag <think>: {has_opening_tag}")
+            print(f"Has closing tag </think>: {has_closing_tag}")
+            
+            # Try to extract thinking content
+            if has_opening_tag and has_closing_tag:
+                thinking_match = re.search(r"<think>(.*?)</think>", content, flags=re.DOTALL)
+                if thinking_match:
+                    thinking_content = thinking_match.group(1).strip()
+                    print(f"\n💭 THINKING CONTENT (extracted from tags):")
+                    print("-" * 80)
+                    print(thinking_content)
+                    print("-" * 80)
+            elif has_closing_tag and not has_opening_tag:
+                # Only closing tag found - extract everything before the closing tag
+                closing_pos = content.find("</think>")
+                if closing_pos > 0:
+                    thinking_content = content[:closing_pos].strip()
+                    print(f"\n💭 THINKING CONTENT (extracted - missing opening tag):")
+                    print("-" * 80)
+                    print(thinking_content)
+                    print("-" * 80)
+                    print("⚠️  WARNING: Missing opening tag <think>!")
+            elif has_opening_tag and not has_closing_tag:
+                # Only opening tag found
+                opening_pos = content.find("<think>")
+                if opening_pos >= 0:
+                    thinking_content = content[opening_pos + len("<think>"):].strip()
+                    print(f"\n💭 THINKING CONTENT (extracted - missing closing tag):")
+                    print("-" * 80)
+                    print(thinking_content)
+                    print("-" * 80)
+                    print("⚠️  WARNING: Missing closing tag </think>!")
+            else:
+                print("\n⚠️  No thinking tags found in output!")
+            print("="*80 + "\n")
             
             final_content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
             
             if "</think>" not in content or not final_content:
-                print("COULD NOT FIND THINK IN OUTPUT!, Querying LLM API again...")
+                print("\n" + "⚠️ " * 40)
+                print("⚠️  WARNING: Could not find </think> tags in output!")
+                print("⚠️  Querying LLM API again for final response...")
+                print("⚠️ " * 40 + "\n")
                 
                 content += "</think>"
                 
@@ -205,9 +271,20 @@ including some of the wrapper code you are given, instead of just filling in the
                 )
                 
                 final_content = final_response.choices[0].message.content
+                
+                print("\n" + "="*80)
+                print("🔄 FINAL RESPONSE (from second API call)")
+                print("="*80)
+                print(final_content)
+                print("="*80 + "\n")
         
-            print(final_content)     
-            print(files)
+            print("\n" + "="*80)
+            print("✅ FINAL PROCESSED OUTPUT")
+            print("="*80)
+            print(final_content)
+            print("="*80)
+            print(f"\n📁 Expected files: {files}")
+            print("="*80 + "\n")
             
             # Process the response using the ModelHelpers
             if expected_single_file:
@@ -230,4 +307,4 @@ including some of the wrapper code you are given, instead of just filling in the
 if __name__ == "__main__":
     # Example usage for local model
     local_instance = UnifiedModelInstance(model="qwen/qwen2.5-14b-instruct")
-    print(local_instance.prompt("Just write a SystemVerilog module for a 2-to-1 multiplexer. dont only think", files=["answer.txt"], category=9))
+    print(local_instance.prompt("Write a SystemVerilog module for a 2-to-1 multiplexer.", files=["answer.txt"], category=9))
